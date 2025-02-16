@@ -769,8 +769,6 @@ class AlbertModel(AlbertPreTrainedModel):
         batch_size, seq_length = input_shape
         device = input_ids.device if input_ids is not None else inputs_embeds.device
 
-        if attention_mask is None:
-            attention_mask = torch.ones(input_shape, device=device)
         if token_type_ids is None:
             if hasattr(self.embeddings, "token_type_ids"):
                 buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
@@ -783,21 +781,25 @@ class AlbertModel(AlbertPreTrainedModel):
             input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
         )
 
-        use_sdpa_attention_mask = (
-            self.attn_implementation == "sdpa"
-            and self.position_embedding_type == "absolute"
-            and head_mask is None
-            and not output_attentions
-        )
-
-        if use_sdpa_attention_mask:
-            extended_attention_mask = _prepare_4d_attention_mask_for_sdpa(
-                attention_mask, embedding_output.dtype, tgt_len=seq_length
+        if attention_mask is not None:
+            use_sdpa_attention_mask = (
+                self.attn_implementation == "sdpa"
+                and self.position_embedding_type == "absolute"
+                and head_mask is None
+                and not output_attentions
             )
+
+            if use_sdpa_attention_mask:
+                extended_attention_mask = _prepare_4d_attention_mask_for_sdpa(
+                    attention_mask, embedding_output.dtype, tgt_len=seq_length
+                )
+            else:
+                extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+                extended_attention_mask = extended_attention_mask.to(dtype=self.dtype)  # fp16 compatibility
+                extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(self.dtype).min
+
         else:
-            extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-            extended_attention_mask = extended_attention_mask.to(dtype=self.dtype)  # fp16 compatibility
-            extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(self.dtype).min
+            extended_attention_mask = None
 
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
